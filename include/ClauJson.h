@@ -2,6 +2,9 @@
 #ifndef CLAUJSON_H
 #define CLAUJSON_H
 
+#if _WIN32
+#include <Windows.h>
+#endif
 
 #include <iostream>
 #include <vector>
@@ -104,6 +107,83 @@ namespace wiz {
 
 	class InFileReserver
 	{
+	private:
+
+		class BomInfo
+		{
+		public:
+			size_t bom_size;
+			char seq[5];
+		};
+
+		const static size_t BOM_COUNT = 1;
+
+		enum class BomType { UTF_8, ANSI };
+
+		const static BomInfo bomInfo[1]; 
+
+		static BomType ReadBom(std::ifstream& file) {
+			char btBom[5] = { 0, };
+			file.read(btBom, 5);
+			size_t readSize = file.gcount();
+
+			if (0 == readSize) {
+				file.clear();
+				file.seekg(0, std::ios_base::beg);
+				return BomType::ANSI;
+			}
+
+			BomInfo stBom = { 0, };
+			BomType type = ReadBom(btBom, readSize, stBom);
+
+			if (type == BomType::ANSI) { // ansi
+				file.clear();
+				file.seekg(0, std::ios_base::beg);
+				return BomType::ANSI;
+			}
+
+			file.clear();
+			file.seekg(stBom.bom_size, std::ios_base::beg);
+			return type;
+		}
+
+		static BomType ReadBom(const char* contents, size_t length, BomInfo& outInfo) {
+			char btBom[5] = { 0, };
+			size_t testLength = length < 5 ? length : 5;
+			memcpy(btBom, contents, testLength);
+
+			size_t i, j;
+			for (i = 0; i < BOM_COUNT; ++i) {
+				const BomInfo& bom = bomInfo[i];
+
+				if (bom.bom_size > testLength) {
+					continue;
+				}
+
+				bool matched = true;
+
+				for (j = 0; j < bom.bom_size; ++j) {
+					if (bom.seq[j] == btBom[j]) {
+						continue;
+					}
+
+					matched = false;
+					break;
+				}
+
+				if (!matched) {
+					continue;
+				}
+
+				outInfo = bom;
+
+				return (BomType)i;
+			}
+
+			return BomType::ANSI;
+		}
+
+
 	private:
 		// todo - rename.
 		static long long Get(long long position, long long length, char ch, const wiz::LoadDataOption& option) {
@@ -477,7 +557,7 @@ namespace wiz {
 								var = true;
 								val = false;
 							}
-							else {
+							else { // _stack.top() == option.Left2
 								var = false;
 								val = true;
 							}
@@ -832,6 +912,7 @@ namespace wiz {
 			}
 		}
 
+	
 
 		static std::pair<bool, int> Scan(std::ifstream& inFile, const int num, const wiz::LoadDataOption& option, int thr_num,
 			char*& _buffer, long long* _buffer_len, long long*& _token_arr, long long* _token_arr_len)
@@ -851,6 +932,15 @@ namespace wiz {
 				inFile.seekg(0, inFile.end);
 				long long length = inFile.tellg();
 				inFile.seekg(0, inFile.beg);
+
+				BomType x = ReadBom(inFile);
+				//	wiz::Out << "length " << length << "\n";
+				if (x == BomType::UTF_8) {
+					length = length - 3;
+#if _WIN32
+					SetConsoleOutputCP(65001); // UTF-8 Codepage 
+#endif
+				}
 
 				file_length = length;
 				buffer = new char[file_length + 1]; // 
@@ -904,6 +994,8 @@ namespace wiz {
 			return x;
 		}
 	};
+
+
 
 	class Type {
 	private:
@@ -2234,7 +2326,13 @@ private:
 					{
 						stream << ut->userTypeList[userTypeListCount]->GetName() << " ";
 					}
-					stream << "{\n";
+
+					if (ut->userTypeList[userTypeListCount]->IsObject()) {
+						stream << "{\n";
+					}
+					else {
+						stream << "[\n";
+					}
 
 					Save2(stream, ut->userTypeList[userTypeListCount], depth + 1);
 					stream << "\n";
@@ -2242,7 +2340,14 @@ private:
 					for (int k = 0; k < depth; ++k) {
 						stream << "\t";
 					}
-					stream << "}";
+
+					if (ut->userTypeList[userTypeListCount]->IsObject()) {
+						stream << "}\n";
+					}
+					else {
+						stream << "]\n";
+					}
+					
 					if (i != ut->ilist.size() - 1) {
 						stream << "\n";
 					}
@@ -2991,6 +3096,13 @@ private:
 				outFile << "\n";
 			}
 
+
+#if _WIN32
+			if (65001 == GetConsoleOutputCP()) {
+				outFile << (char)0xEF << (char)0xBB << (char)0xBF;
+			}
+#endif
+
 			/// saveFile
 			global.Save1(outFile); // cf) friend
 
@@ -3012,6 +3124,12 @@ private:
 
 				outFile << "\n";
 			}
+
+#if _WIN32
+			if (65001 == GetConsoleOutputCP()) {
+				outFile << (char)0xEF << (char)0xBB << (char)0xBF;
+			}
+#endif
 
 			/// saveFile
 			global.Save2(outFile); // cf) friend
